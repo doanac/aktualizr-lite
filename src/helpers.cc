@@ -12,7 +12,18 @@
 #include "package_manager/packagemanagerfactory.h"
 
 #ifdef BUILD_DOCKERAPP
+#include "composebundlemanager.h"
 #include "package_manager/dockerappmanager.h"
+
+static __attribute__((constructor)) void init_pacman() {
+  PackageManagerFactory::registerPackageManager(
+      PACKAGE_MANAGER_COMPOSEBUNDLE,
+      [](const PackageConfig &pconfig, const BootloaderConfig &bconfig, const std::shared_ptr<INvStorage> &storage,
+         const std::shared_ptr<HttpInterface> &http) {
+        return new ComposeBundleManager(pconfig, bconfig, storage, http);
+      });
+}
+
 static void add_apps_header(std::vector<std::string> &headers, PackageConfig &config) {
   if (config.type == PACKAGE_MANAGER_OSTREEDOCKERAPP) {
     DockerAppManagerConfig dappcfg(config);
