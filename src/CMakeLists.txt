@@ -1,6 +1,14 @@
 set(AKTUALIZR_LITE_SRC main.cc helpers.cc)
 set(AKTUALIZR_LITE_HEADERS helpers.h)
 
+if(BUILD_OSTREE)
+    if (BUILD_DOCKERAPP)
+        list(APPEND AKTUALIZR_LITE_SRC composeappmanager.cc)
+        list(APPEND AKTUALIZR_LITE_HEADERS composeappmanager.h)
+    endif(BUILD_DOCKERAPP)
+endif(BUILD_OSTREE)
+
+
 add_executable(aktualizr-lite ${AKTUALIZR_LITE_SRC})
 target_link_libraries(aktualizr-lite aktualizr_lib)
 
