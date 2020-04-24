@@ -3,11 +3,17 @@
 #include <boost/filesystem.hpp>
 #include <boost/process.hpp>
 
+#include "http/httpclient.h"
 #include "test_utils.h"
 
 #include "composebundlemanager.h"
 
 static boost::filesystem::path test_sysroot;
+
+static void progress_cb(const Uptane::Target& target, const std::string& description, unsigned int progress) {
+  (void)description;
+  LOG_INFO << "progress_cb " << target << " " << progress;
+}
 
 TEST(ComposeBundles, Config) {
   Config config;
@@ -39,6 +45,7 @@ struct TestClient {
     tempdir = std_::make_unique<TemporaryDirectory>();
 
     Config config;
+    config.bootloader.reboot_sentinel_dir = tempdir->Path();
     config.pacman.type = PACKAGE_MANAGER_COMPOSEBUNDLE;
     config.pacman.sysroot = test_sysroot.string();
     config.pacman.extra["compose_bundles_root"] = (*tempdir / "bundles").native();
@@ -48,11 +55,15 @@ struct TestClient {
 
     storage = INvStorage::newStorage(config.storage);
     pacman = std_::make_unique<ComposeBundleManager>(config.pacman, config.bootloader, storage, nullptr);
+    keys = std_::make_unique<KeyManager>(storage, config.keymanagerConfig());
+    fetcher = std_::make_unique<Uptane::Fetcher>(config, std::make_shared<HttpClient>());
   }
 
   std::unique_ptr<TemporaryDirectory> tempdir;
   std::shared_ptr<INvStorage> storage;
   std::unique_ptr<ComposeBundleManager> pacman;
+  std::unique_ptr<KeyManager> keys;
+  std::unique_ptr<Uptane::Fetcher> fetcher;
 };
 
 TEST(ComposeBundles, getBundles) {
@@ -74,6 +85,34 @@ TEST(ComposeBundles, getBundles) {
   ASSERT_EQ("n/a", bundles[0].second);
   ASSERT_EQ("app2", bundles[1].first);
   ASSERT_EQ("N/A", bundles[1].second);
+}
+
+TEST(ComposeBundles, fetch) {
+  std::string sha = Utils::readFile(test_sysroot / "ostree/repo/refs/heads/ostree/1/1/0", true);
+  Json::Value target_json;
+  target_json["hashes"]["sha256"] = sha;
+  target_json["custom"]["targetFormat"] = "OSTREE";
+  target_json["length"] = 0;
+  target_json["custom"]["docker_compose_bundles"]["app1"]["uri"] = "n/a";
+  target_json["custom"]["docker_compose_bundles"]["app2"]["uri"] = "N/A";
+  Uptane::Target target("pull", target_json);
+
+  TestClient client("app2 doesnotexist");  // only app2 can be fetched
+  bool result = client.pacman->fetchTarget(target, *(client.fetcher), *(client.keys), progress_cb, nullptr);
+  ASSERT_TRUE(result);
+  std::string output = Utils::readFile(client.tempdir->Path() / "bundles/app2/download.log", true);
+  ASSERT_EQ("download N/A", output);
+  output = Utils::readFile(client.tempdir->Path() / "bundles/app2/config.log", true);
+  ASSERT_EQ("config", output);
+  output = Utils::readFile(client.tempdir->Path() / "bundles/app2/pull.log", true);
+  ASSERT_EQ("pull", output);
+  ASSERT_FALSE(boost::filesystem::exists(client.tempdir->Path() / "bundles/doesnotexist"));
+
+  // Now do a quick check that we can handle a simple download failure
+  target_json["custom"]["docker_compose_bundles"]["app2"]["uri"] = "FAILTEST";
+  target = Uptane::Target("pull", target_json);
+  result = client.pacman->fetchTarget(target, *(client.fetcher), *(client.keys), progress_cb, nullptr);
+  ASSERT_FALSE(result);
 }
 
 #ifndef __NO_MAIN__
