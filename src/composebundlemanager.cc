@@ -101,3 +101,68 @@ bool ComposeBundleManager::fetchTarget(const Uptane::Target &target, Uptane::Fet
   }
   return passed;
 }
+
+data::InstallationResult ComposeBundleManager::install(const Uptane::Target &target) const {
+  data::InstallationResult res;
+  Uptane::Target current = OstreeManager::getCurrent();
+  if (current.sha256Hash() != target.sha256Hash()) {
+    // notify the bootloader before installation happens as it is not atomic
+    // and a false notification doesn't hurt with rollback support in place
+    updateNotify();
+    res = OstreeManager::install(target);
+    if (res.result_code.num_code == data::ResultCode::Numeric::kInstallFailed) {
+      LOG_ERROR << "Failed to install OSTree target, skipping Docker Compose Bundles";
+      return res;
+    }
+  } else {
+    LOG_INFO << "Target " << target.sha256Hash() << " is same as current";
+    res = data::InstallationResult(data::ResultCode::Numeric::kOk, "OSTree hash already installed, same as current");
+  }
+
+  handleRemovedApps(target);
+  for (const auto &pair : getBundles(target)) {
+    LOG_INFO << "Installing " << pair.first << " -> " << pair.second;
+    if (!ComposeBundle(pair.first, cfg_).start()) {
+      res = data::InstallationResult(data::ResultCode::Numeric::kInstallFailed, "Could not install bundle");
+    }
+  };
+
+  if (cfg_.docker_prune) {
+    LOG_INFO << "Pruning unused docker images";
+    // Utils::shell which isn't interactive, we'll use std::system so that
+    // stdout/stderr is streamed while docker sets things up.
+    if (std::system("docker image prune -a -f --filter=\"label!=aktualizr-no-prune\"") != 0) {
+      LOG_WARNING << "Unable to prune unused docker images";
+    }
+  }
+
+  return res;
+}
+
+// Handle the case like:
+//  1) sota.toml is configured with 2 docker apps: "app1, app2"
+//  2) update is applied, so we are now running both app1 and app2
+//  3) sota.toml is updated with 1 docker app: "app1"
+// At this point we should stop app2 and remove it.
+void ComposeBundleManager::handleRemovedApps(const Uptane::Target &target) const {
+  if (!boost::filesystem::is_directory(cfg_.bundles_root)) {
+    LOG_DEBUG << "cfg_.bundles_root does not exist";
+    return;
+  }
+  std::vector<std::string> target_apps = target.custom_data()["docker_compose_bundles"].getMemberNames();
+
+  for (auto &entry : boost::make_iterator_range(boost::filesystem::directory_iterator(cfg_.bundles_root), {})) {
+    if (boost::filesystem::is_directory(entry)) {
+      std::string name = entry.path().filename().native();
+      if (std::find(cfg_.bundles.begin(), cfg_.bundles.end(), name) == cfg_.bundles.end()) {
+        LOG_WARNING << "Docker Compose Bundle(" << name
+                    << ") installed, but is now removed from configuration. Removing from system";
+        ComposeBundle(name, cfg_).remove();
+      } else if (std::find(target_apps.begin(), target_apps.end(), name) == target_apps.end()) {
+        LOG_WARNING << "Docker Compose Bundle(" << name
+                    << ") configured, but not defined in installation target. Removing from system";
+        ComposeBundle(name, cfg_).remove();
+      }
+    }
+  }
+}

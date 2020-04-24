@@ -23,12 +23,15 @@ class ComposeBundleManager : public OstreeManager {
 
   bool fetchTarget(const Uptane::Target &target, Uptane::Fetcher &fetcher, const KeyManager &keys,
                    FetcherProgressCb progress_cb, const api::FlowControlToken *token) override;
+  data::InstallationResult install(const Uptane::Target &target) const override;
   std::string name() const override { return PACKAGE_MANAGER_COMPOSEBUNDLE; };
 
  private:
   FRIEND_TEST(ComposeBundles, getBundles);
+  FRIEND_TEST(ComposeBundles, handleRemovedApps);
 
   std::vector<std::pair<std::string, std::string>> getBundles(const Uptane::Target &t) const;
+  void handleRemovedApps(const Uptane::Target &target) const;
 
   ComposeBundleConfig cfg_;
 };
