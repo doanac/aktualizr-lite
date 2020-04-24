@@ -23,3 +23,23 @@ ComposeBundleConfig::ComposeBundleConfig(const PackageConfig &pconfig) {
     docker_prune = val != "0" && val != "false";
   }
 }
+
+std::vector<std::pair<std::string, std::string>> ComposeBundleManager::getBundles(const Uptane::Target &t) const {
+  std::vector<std::pair<std::string, std::string>> bundles;
+
+  auto target_bundles = t.custom_data()["docker_compose_bundles"];
+  for (Json::ValueIterator i = target_bundles.begin(); i != target_bundles.end(); ++i) {
+    if ((*i).isObject() && (*i).isMember("uri")) {
+      for (const auto &bundle : cfg_.bundles) {
+        if (i.key().asString() == bundle) {
+          bundles.emplace_back(bundle, (*i)["uri"].asString());
+          break;
+        }
+      }
+    } else {
+      LOG_ERROR << "Invalid custom data for docker_compose_bundle: " << i.key().asString() << " -> " << *i;
+    }
+  }
+
+  return bundles;
+}

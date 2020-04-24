@@ -24,6 +24,10 @@ class ComposeBundleManager : public OstreeManager {
   std::string name() const override { return PACKAGE_MANAGER_COMPOSEBUNDLE; };
 
  private:
+  FRIEND_TEST(ComposeBundles, getBundles);
+
+  std::vector<std::pair<std::string, std::string>> getBundles(const Uptane::Target &t) const;
+
   ComposeBundleConfig cfg_;
 };
 

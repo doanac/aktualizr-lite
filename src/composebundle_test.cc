@@ -34,6 +34,48 @@ TEST(ComposeBundles, Config) {
   ASSERT_FALSE(cfg.docker_prune);
 }
 
+struct TestClient {
+  TestClient(const char* bundles) {
+    tempdir = std_::make_unique<TemporaryDirectory>();
+
+    Config config;
+    config.pacman.type = PACKAGE_MANAGER_COMPOSEBUNDLE;
+    config.pacman.sysroot = test_sysroot.string();
+    config.pacman.extra["compose_bundles_root"] = (*tempdir / "bundles").native();
+    config.pacman.extra["compose_bundles"] = bundles;
+    config.pacman.extra["docker_compose_bin"] = "src/compose_fake.sh";
+    config.storage.path = tempdir->Path();
+
+    storage = INvStorage::newStorage(config.storage);
+    pacman = std_::make_unique<ComposeBundleManager>(config.pacman, config.bootloader, storage, nullptr);
+  }
+
+  std::unique_ptr<TemporaryDirectory> tempdir;
+  std::shared_ptr<INvStorage> storage;
+  std::unique_ptr<ComposeBundleManager> pacman;
+};
+
+TEST(ComposeBundles, getBundles) {
+  TemporaryDirectory dir;
+  auto mgr = TestClient("app1 app2").pacman;
+
+  std::string sha = Utils::readFile(test_sysroot / "ostree/repo/refs/heads/ostree/1/1/0", true);
+  Json::Value target_json;
+  target_json["hashes"]["sha256"] = sha;
+  target_json["custom"]["targetFormat"] = "OSTREE";
+  target_json["length"] = 0;
+  target_json["custom"]["docker_compose_bundles"]["app1"]["uri"] = "n/a";
+  target_json["custom"]["docker_compose_bundles"]["app2"]["uri"] = "N/A";
+  Uptane::Target target("pull", target_json);
+
+  auto bundles = mgr->getBundles(target);
+  ASSERT_EQ(2, bundles.size());
+  ASSERT_EQ("app1", bundles[0].first);
+  ASSERT_EQ("n/a", bundles[0].second);
+  ASSERT_EQ("app2", bundles[1].first);
+  ASSERT_EQ("N/A", bundles[1].second);
+}
+
 #ifndef __NO_MAIN__
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
