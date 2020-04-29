@@ -14,9 +14,14 @@ build=$(mktemp -d -p $here)
 cd $build
 
 ../cmake-init.sh
-ninja aktualizr-lite t_lite-helpers libt_lite-mock.so uptane-generator make_ostree_sysroot
+ninja aktualizr-lite t_lite-helpers t_compose-apps libt_lite-mock.so uptane-generator make_ostree_sysroot
 
-ninja aktualizr_clang_tidy-src-helpers.cc  aktualizr_clang_tidy-src-main.cc
+clang_tests=$(ninja help | grep aktualizr_clang_tidy-src- | cut -d: -f1)
+ninja $clang_tests
+
+clang_tests=$(ninja help | grep aktualizr_ci_clang_format-src- | cut -d: -f1)
+ninja $clang_tests
 
 ctest -V -R test_lite-helpers
+ctest -V -R test_compose-apps
 ctest -V -R test_aktualizr-lite
