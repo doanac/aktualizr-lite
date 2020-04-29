@@ -2,6 +2,8 @@
 #include <sys/file.h>
 #include <unistd.h>
 
+#include <boost/process.hpp>
+#include <boost/process/environment.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
@@ -165,6 +167,14 @@ LiteClient::LiteClient(Config &config_in)
     }
   }
 
+  if (raw.count("callback_program") == 1) {
+    callback_program = raw.at("callback_program");
+    if (!boost::filesystem::exists(callback_program)) {
+      LOG_ERROR << "callback_program(" << callback_program << ") does not exist";
+      callback_program = "";
+    }
+  }
+
   EcuSerials ecu_serials;
   if (!storage->loadEcuSerials(&ecu_serials)) {
     // Set a "random" serial so we don't get warning messages.
@@ -223,6 +233,36 @@ LiteClient::LiteClient(Config &config_in)
   }
 }
 
+void LiteClient::callback(const char *msg, const Uptane::Target &install_target, const std::string &result) {
+  if (callback_program.size() == 0) {
+    return;
+  }
+  auto env = boost::this_process::environment();
+  boost::process::environment env_copy = env;
+  env_copy["MESSAGE"] = msg;
+  env_copy["CURRENT_TARGET"] = (config.storage.path / "current-target").string();
+
+  if (!install_target.MatchTarget(Uptane::Target::Unknown())) {
+    env_copy["INSTALL_TARGET"] = install_target.filename();
+  }
+  if (result.size() > 0) {
+    env_copy["RESULT"] = result;
+  }
+
+  int rc = boost::process::system(callback_program, env_copy);
+  if (rc != 0) {
+    LOG_ERROR << "Error with callback: " << rc;
+  }
+}
+
+bool LiteClient::checkForUpdates() {
+  Uptane::Target t = Uptane::Target::Unknown();
+  callback("check-for-update-pre", t);
+  bool rc = primary->updateImageMeta();
+  callback("check-for-update-post", t);
+  return rc;
+}
+
 void LiteClient::notify(const Uptane::Target &t, std::unique_ptr<ReportEvent> event) {
   if (!config.tls.server.empty()) {
     event->custom["targetName"] = t.filename();
@@ -232,24 +272,30 @@ void LiteClient::notify(const Uptane::Target &t, std::unique_ptr<ReportEvent> ev
 }
 
 void LiteClient::notifyDownloadStarted(const Uptane::Target &t) {
+  callback("download-pre", t);
   notify(t, std_::make_unique<EcuDownloadStartedReport>(primary_ecu.first, t.correlation_id()));
 }
 
 void LiteClient::notifyDownloadFinished(const Uptane::Target &t, bool success) {
+  callback("download-post", t, success ? "OK" : "FAILED");
   notify(t, std_::make_unique<EcuDownloadCompletedReport>(primary_ecu.first, t.correlation_id(), success));
 }
 
 void LiteClient::notifyInstallStarted(const Uptane::Target &t) {
+  callback("install-pre", t);
   notify(t, std_::make_unique<EcuInstallationStartedReport>(primary_ecu.first, t.correlation_id()));
 }
 
 void LiteClient::notifyInstallFinished(const Uptane::Target &t, data::ResultCode::Numeric rc) {
   if (rc == data::ResultCode::Numeric::kNeedCompletion) {
+    callback("install-post", t, "NEEDS_COMPLETION");
     notify(t, std_::make_unique<EcuInstallationAppliedReport>(primary_ecu.first, t.correlation_id()));
   } else if (rc == data::ResultCode::Numeric::kOk) {
+    callback("install-post", t, "OK");
     writeCurrentTarget(t);
     notify(t, std_::make_unique<EcuInstallationCompletedReport>(primary_ecu.first, t.correlation_id(), true));
   } else {
+    callback("install-post", t, "FAILED");
     notify(t, std_::make_unique<EcuInstallationCompletedReport>(primary_ecu.first, t.correlation_id(), false));
   }
 }
@@ -304,6 +350,42 @@ void generate_correlation_id(Uptane::Target &t) {
   }
   boost::uuids::uuid tmp = boost::uuids::random_generator()();
   t.setCorrelationId(id + "-" + boost::uuids::to_string(tmp));
+}
+
+data::ResultCode::Numeric LiteClient::download(const Uptane::Target &target) {
+  std::unique_ptr<Lock> lock = getDownloadLock();
+  if (lock == nullptr) {
+    return data::ResultCode::Numeric::kInternalError;
+  }
+  notifyDownloadStarted(target);
+  if (!primary->downloadImage(target).first) {
+    notifyDownloadFinished(target, false);
+    return data::ResultCode::Numeric::kDownloadFailed;
+  }
+  notifyDownloadFinished(target, true);
+  return data::ResultCode::Numeric::kOk;
+}
+
+data::ResultCode::Numeric LiteClient::install(const Uptane::Target &target) {
+  std::unique_ptr<Lock> lock = getUpdateLock();
+  if (lock == nullptr) {
+    return data::ResultCode::Numeric::kInternalError;
+  }
+
+  notifyInstallStarted(target);
+  auto iresult = primary->PackageInstall(target);
+  if (iresult.result_code.num_code == data::ResultCode::Numeric::kNeedCompletion) {
+    LOG_INFO << "Update complete. Please reboot the device to activate";
+    storage->savePrimaryInstalledVersion(target, InstalledVersionUpdateMode::kPending);
+  } else if (iresult.result_code.num_code == data::ResultCode::Numeric::kOk) {
+    LOG_INFO << "Update complete. No reboot needed";
+    storage->savePrimaryInstalledVersion(target, InstalledVersionUpdateMode::kCurrent);
+  } else {
+    LOG_ERROR << "Unable to install update: " << iresult.description;
+    // let go of the lock since we couldn't update
+  }
+  notifyInstallFinished(target, iresult.result_code.num_code);
+  return iresult.result_code.num_code;
 }
 
 bool target_has_tags(const Uptane::Target &t, const std::vector<std::string> &config_tags) {

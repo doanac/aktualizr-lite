@@ -134,9 +134,8 @@ TEST(helpers, locking) {
   // 1. Create a lock and hold in inside a thread for a small amount of time
   std::unique_ptr<Lock> lock = client.getUpdateLock();
   std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-  std::thread t([&lock] {
+  std::thread t([_ = std::move(lock)] {  // pass ownership of ptr into lambda
     std::this_thread::sleep_for(std::chrono::milliseconds{500});
-    lock->release();
   });
 
   // 2. Get the lock - this should take a short period of time while its blocked
@@ -148,6 +147,56 @@ TEST(helpers, locking) {
   ASSERT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 300);
 
   t.join();
+}
+
+TEST(helpers, callback) {
+  TemporaryDirectory cfg_dir;
+
+  // First - invalid callback. We should detect and not crash
+  Config bad_config;
+  bad_config.bootloader.reboot_sentinel_dir = cfg_dir.Path();
+  bad_config.pacman.sysroot = test_sysroot;
+  bad_config.storage.path = cfg_dir.Path();
+  bad_config.pacman.extra["callback_program"] = "This does not exist";
+
+  LiteClient bad_client(bad_config);
+  ASSERT_EQ(0, bad_client.callback_program.size());
+  bad_client.callback("Just call to make sure it doesnt crash", Uptane::Target::Unknown());
+
+  // Second - good callback. Make sure it works as expected
+  Config config;
+  config.bootloader.reboot_sentinel_dir = cfg_dir.Path();
+  config.pacman.sysroot = test_sysroot;
+  config.storage.path = cfg_dir.Path();
+
+  std::string cb = (cfg_dir / "callback.sh").native();
+  std::string env = (cfg_dir / "callback.log").native();
+  config.pacman.extra["callback_program"] = cb;
+
+  std::string script("#!/bin/sh -e\n");
+  script += "env > " + env;
+  Utils::writeFile(cb, script);
+  chmod(cb.c_str(), S_IRWXU);
+
+  LiteClient(config).callback("AmigaOsInstall", Uptane::Target::Unknown(), "OK");
+  std::string line;
+  std::ifstream in(env);
+  bool found_target = false, found_message = false, found_result = false;
+  while (std::getline(in, line)) {
+    if (line.rfind("CURRENT_TARGET=", 0) == 0) {
+      ASSERT_EQ((cfg_dir / "current-target").string(), line.substr(15));
+      found_target = true;
+    } else if (line.rfind("MESSAGE=", 0) == 0) {
+      ASSERT_EQ("AmigaOsInstall", line.substr(8));
+      found_message = true;
+    } else if (line.rfind("RESULT=", 0) == 0) {
+      ASSERT_EQ("OK", line.substr(7));
+      found_result = true;
+    }
+  }
+  ASSERT_TRUE(found_target);
+  ASSERT_TRUE(found_message);
+  ASSERT_TRUE(found_result);
 }
 
 #ifdef BUILD_DOCKERAPP
