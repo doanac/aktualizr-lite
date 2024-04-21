@@ -60,6 +60,7 @@ class ComposeAppManager : public RootfsTreeManager {
   AppsContainer getApps(const Uptane::Target& t) const;
   AppsContainer getAppsToUpdate(const Uptane::Target& t) const;
   bool checkForAppsToUpdate(const Uptane::Target& target);
+  void setEnabledApps(const std::vector<std::string> apps);
   void setAppsNotChecked() { are_apps_checked_ = false; }
   void handleRemovedApps(const Uptane::Target& target) const;
   Json::Value getAppsState() const;

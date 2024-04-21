@@ -245,6 +245,32 @@ TEST_F(ApiClientTest, Install) {
   ASSERT_EQ(InstallResult::Status::NeedsCompletion, iresult.status);
 }
 
+TEST_F(ApiClientTest, InstallSetApps) {
+  auto liteclient = createLiteClient();
+  ASSERT_TRUE(targetsMatch(liteclient->getCurrent(), getInitialTarget()));
+
+  std::vector<AppEngine::App> apps{{"app-01", "app-01-URI"}, {"app-02", "app-02-URI"}};
+  auto new_target = createAppTarget(apps);
+
+  AkliteClient client(liteclient);
+  auto result = client.CheckIn();
+  ASSERT_EQ(CheckInResult::Status::Ok, result.status);
+
+  auto latest = result.GetLatest();
+
+  auto installer = client.Installer(latest);
+  installer->SetEnabledApps(std::vector<std::string>{"app-02"});
+  ASSERT_NE(nullptr, installer);
+  auto dresult = installer->Download();
+  ASSERT_EQ(DownloadResult::Status::Ok, dresult.status);
+
+  auto iresult = installer->Install();
+  ASSERT_EQ(InstallResult::Status::Ok, iresult.status);
+
+  // TODO - how to prove what we installed  
+  EXPECT_CALL(*getAppEngine(), install).Times(1);
+}
+
 TEST_F(ApiClientTest, InstallWithCorrelationId) {
   auto liteclient = createLiteClient();
   ASSERT_TRUE(targetsMatch(liteclient->getCurrent(), getInitialTarget()));

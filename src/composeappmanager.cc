@@ -161,6 +161,10 @@ ComposeAppManager::ComposeAppManager(const PackageConfig& pconfig, const Bootloa
   }
 }
 
+void ComposeAppManager::setEnabledApps(const std::vector<std::string> apps) {
+  cfg_.apps = apps;
+}
+
 // Returns an intersection of apps specified in Target and the configuration
 ComposeAppManager::AppsContainer ComposeAppManager::getApps(const Uptane::Target& t) const {
   AppsContainer apps;

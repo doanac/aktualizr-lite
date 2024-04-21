@@ -557,6 +557,10 @@ class LiteInstall : public InstallContext {
               InstallMode install_mode = InstallMode::All)
       : client_(std::move(client)), target_(std::move(t)), reason_(reason), mode_{install_mode} {}
 
+  void SetEnabledApps(const std::vector<std::string> apps) override {
+    client_->setEnabledApps(apps);
+  }
+
   InstallResult Install() override {
     client_->logTarget("Installing: ", *target_);
 

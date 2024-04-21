@@ -775,6 +775,18 @@ bool LiteClient::appsInSync(const Uptane::Target& target) const {
   return true;
 }
 
+void LiteClient::setEnabledApps(const std::vector<std::string> apps) {
+  if (package_manager_->name() == ComposeAppManager::Name) {
+    auto* compose_pacman = dynamic_cast<ComposeAppManager*>(package_manager_.get());
+    if (compose_pacman == nullptr) {
+      LOG_ERROR << "Cannot downcast the package manager to a specific type";
+    } else {
+      compose_pacman->setEnabledApps(apps);
+    }
+  }
+}
+
+
 void LiteClient::setAppsNotChecked() {
   if (package_manager_->name() == ComposeAppManager::Name) {
     auto* compose_pacman = dynamic_cast<ComposeAppManager*>(package_manager_.get());

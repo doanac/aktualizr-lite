@@ -127,6 +127,7 @@ class InstallContext {
   InstallContext &operator=(InstallContext &&) = delete;
 
   virtual ~InstallContext() = default;
+  virtual void SetEnabledApps(const std::vector<std::string> apps) = 0;
   virtual DownloadResult Download() = 0;
   virtual InstallResult Install() = 0;
   virtual std::string GetCorrelationId() = 0;
