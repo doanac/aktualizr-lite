@@ -4,6 +4,7 @@ set(TARGET custom-sota-client)
 project(${TARGET})
 
 set(SRC
+  app_mgr.cpp
   daemon.cpp
   cli.cpp
   main.cpp

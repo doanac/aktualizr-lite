@@ -6,6 +6,7 @@
 #include <boost/log/expressions.hpp>
 
 #include "aktualizr-lite/api.h"
+#include "app_mgr.h"
 
 #define LOG_INFO    BOOST_LOG_TRIVIAL(info)
 #define LOG_WARNING BOOST_LOG_TRIVIAL(warning)
@@ -79,6 +80,10 @@ int cmd_daemon(std::string local_repo_path) {
     LOG_ERROR << "Reboot command: " << reboot_cmd << " is not executable";
     return EXIT_FAILURE;
   }
+  
+  AppMgr appMgr;
+  LOG_INFO << "Starting app manager thread";
+  appMgr.start(2024);
 
   LOG_INFO << "Starting aklite client with " << interval << " second interval";
 
@@ -164,12 +169,31 @@ int cmd_daemon(std::string local_repo_path) {
       } else {
         LOG_INFO << "Device is up-to-date";
       }
+
+      //std::this_thread::sleep_for(std::chrono::seconds(interval));
+      std::vector<std::string> apps;
+      if (appMgr.getApps(interval, apps)) {
+        LOG_INFO << "Apps have changed from appMgr";
+        auto installer = client->Installer(latest, "Apps list changed", "", InstallMode::All,
+                                           is_local_update ? &local_update_source : nullptr);
+        if (!installer) {
+          LOG_ERROR << "Found latest Target but failed to retrieve its metadata from DB, skipping update";
+          std::this_thread::sleep_for(std::chrono::seconds(interval));
+          continue;
+        }
+
+        installer->SetEnabledApps(apps);
+        auto dres = installer->Download();
+        if (dres.status != DownloadResult::Status::Ok) {
+          LOG_ERROR << "Unable to download target: " << dres;
+          continue;
+        }
+       LOG_INFO << "Apps updated!";
+      }
     } catch (const std::exception &exc) {
       LOG_ERROR << "Failed to find or update Target: " << exc.what();
       continue;
     }
-
-    std::this_thread::sleep_for(std::chrono::seconds(interval));
   }
   return EXIT_FAILURE;
 }
